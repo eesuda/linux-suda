@@ -178,19 +178,11 @@ static irqreturn_t idma64_irq(int irq, void *dev)
 	if (!status)
 		return IRQ_NONE;
 
-	/* Disable interrupts */
-	channel_clear_bit(idma64, MASK(XFER), idma64->all_chan_mask);
-	channel_clear_bit(idma64, MASK(ERROR), idma64->all_chan_mask);
-
 	status_xfer = dma_readl(idma64, RAW(XFER));
 	status_err = dma_readl(idma64, RAW(ERROR));
 
 	for (i = 0; i < idma64->dma.chancnt; i++)
 		idma64_chan_irq(idma64, i, status_err, status_xfer);
-
-	/* Re-enable interrupts */
-	channel_set_bit(idma64, MASK(XFER), idma64->all_chan_mask);
-	channel_set_bit(idma64, MASK(ERROR), idma64->all_chan_mask);
 
 	return IRQ_HANDLED;
 }
@@ -595,6 +587,8 @@ static int idma64_probe(struct idma64_chip *chip)
 	idma64->dma.residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
 
 	idma64->dma.dev = chip->dev;
+
+	dma_set_max_seg_size(idma64->dma.dev, IDMA64C_CTLH_BLOCK_TS_MASK);
 
 	ret = dma_async_device_register(&idma64->dma);
 	if (ret)
