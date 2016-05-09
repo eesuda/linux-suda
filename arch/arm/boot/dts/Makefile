@@ -403,6 +403,7 @@ dtb-$(CONFIG_ARCH_OMAP3) += \
 	omap3430-sdp.dtb \
 	omap3-beagle.dtb \
 	omap3-beagle-xm.dtb \
+	omap3-tele.dtb \
 	omap3-beagle-xm-ab.dtb \
 	omap3-cm-t3517.dtb \
 	omap3-cm-t3530.dtb \
