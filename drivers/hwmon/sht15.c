@@ -16,8 +16,6 @@
  * For further information, see the Documentation/hwmon/sht15 file.
  */
 
-#include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -53,6 +51,8 @@
 #define SHT15_STATUS_NO_OTP_RELOAD	0x02
 #define SHT15_STATUS_HEATER		0x04
 #define SHT15_STATUS_LOW_BATTERY	0x40
+
+#define SHT15_TSDTWT			320	/* (msecs) Max wait for data ready */
 
 /* List of supported chips */
 enum sht15_chips { sht10, sht11, sht15, sht71, sht75 };
@@ -122,7 +122,7 @@ static const u8 sht15_crc8_table[] = {
 /**
  * struct sht15_data - device instance specific data
  * @pdata:		platform data (gpio's etc).
- * @read_work:		bh of interrupt handler.
+ * @read_work:		bh of data read.
  * @wait_queue:		wait queue for getting values from device.
  * @val_temp:		last temperature value read from device.
  * @val_humid:		last humidity value read from device.
@@ -146,7 +146,6 @@ static const u8 sht15_crc8_table[] = {
  *			obtained from the regulator and so any calculations
  *			based upon it will be invalid.
  * @update_supply_work:	work struct that is used to update the supply_uv.
- * @interrupt_handled:	flag used to indicate a handler has been scheduled.
  */
 struct sht15_data {
 	struct sht15_platform_data	*pdata;
@@ -170,7 +169,6 @@ struct sht15_data {
 	int				supply_uv;
 	bool				supply_uv_valid;
 	struct work_struct		update_supply_work;
-	atomic_t			interrupt_handled;
 };
 
 /**
@@ -314,8 +312,7 @@ static int sht15_wait_for_response(struct sht15_data *data)
  * @data:	device state
  * @cmd:	command byte to be sent
  *
- * On entry, sck is output low, data is output pull high
- * and the interrupt disabled.
+ * On entry, sck is output low, data is output pull high.
  */
 static int sht15_send_cmd(struct sht15_data *data, u8 cmd)
 {
@@ -530,14 +527,10 @@ static int sht15_measurement(struct sht15_data *data,
 	ret = gpio_direction_input(data->pdata->gpio_data);
 	if (ret)
 		return ret;
-	atomic_set(&data->interrupt_handled, 0);
 
-	enable_irq(gpio_to_irq(data->pdata->gpio_data));
+	msleep(SHT15_TSDTWT);
 	if (gpio_get_value(data->pdata->gpio_data) == 0) {
-		disable_irq_nosync(gpio_to_irq(data->pdata->gpio_data));
-		/* Only relevant if the interrupt hasn't occurred. */
-		if (!atomic_read(&data->interrupt_handled))
-			schedule_work(&data->read_work);
+		schedule_work(&data->read_work);
 	}
 	ret = wait_event_timeout(data->wait_queue,
 				 (data->state == SHT15_READING_NOTHING),
@@ -546,7 +539,6 @@ static int sht15_measurement(struct sht15_data *data,
 		data->state = SHT15_READING_NOTHING;
 		return -EIO;
 	} else if (ret == 0) { /* timeout occurred */
-		disable_irq_nosync(gpio_to_irq(data->pdata->gpio_data));
 		ret = sht15_connection_reset(data);
 		if (ret)
 			return ret;
@@ -802,19 +794,6 @@ static const struct attribute_group sht15_attr_group = {
 	.attrs = sht15_attrs,
 };
 
-static irqreturn_t sht15_interrupt_fired(int irq, void *d)
-{
-	struct sht15_data *data = d;
-
-	/* First disable the interrupt */
-	disable_irq_nosync(irq);
-	atomic_inc(&data->interrupt_handled);
-	/* Then schedule a reading work struct */
-	if (data->state != SHT15_READING_NOTHING)
-		schedule_work(&data->read_work);
-	return IRQ_HANDLED;
-}
-
 static void sht15_bh_read_data(struct work_struct *work_s)
 {
 	uint16_t val = 0;
@@ -826,16 +805,7 @@ static void sht15_bh_read_data(struct work_struct *work_s)
 
 	/* Firstly, verify the line is low */
 	if (gpio_get_value(data->pdata->gpio_data)) {
-		/*
-		 * If not, then start the interrupt again - care here as could
-		 * have gone low in meantime so verify it hasn't!
-		 */
-		atomic_set(&data->interrupt_handled, 0);
-		enable_irq(gpio_to_irq(data->pdata->gpio_data));
-		/* If still not occurred or another handler was scheduled */
-		if (gpio_get_value(data->pdata->gpio_data)
-		    || atomic_read(&data->interrupt_handled))
-			return;
+		return;
 	}
 
 	/* Read the data back from the device */
@@ -911,6 +881,47 @@ static int sht15_invalidate_voltage(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
+/*
+ * Translate OpenFirmware node properties into platform_data
+ */
+static int sht15_get_pdata(struct device *dev,
+			    struct sht15_platform_data *pdata)
+{
+	struct gpio_desc *gpio_data;
+	struct gpio_desc *gpio_sck;
+
+	/* sck GPIO if one exists */
+	gpio_sck = devm_gpiod_get(dev, "sck", GPIOD_OUT_LOW);
+	if (IS_ERR(gpio_sck)) {
+
+		dev_err(dev, "cannot get sck-gpios %ld\n",
+			PTR_ERR(gpio_sck));
+		return PTR_ERR(gpio_sck);
+	}
+	pdata->gpio_sck = desc_to_gpio(gpio_sck);
+
+	/* data GPIO if one exists */
+	gpio_data = devm_gpiod_get(dev, "data", GPIOD_IN);
+	if (IS_ERR(gpio_data)) {
+
+		dev_err(dev, "cannot get data-gpios %ld\n",
+			PTR_ERR(gpio_data));
+		return PTR_ERR(gpio_data);
+	}
+	pdata->gpio_data = desc_to_gpio(gpio_data);
+
+	if (dev->of_node) {
+	    of_property_read_s32(dev->of_node, "supply-mv", &pdata->supply_mv);
+	}
+
+	return 0;
+}
+
+static const struct of_device_id of_sht15_match[] = {
+	{ .compatible = "sensirion,sht15", },
+	{},
+};
+
 static int sht15_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -928,11 +939,23 @@ static int sht15_probe(struct platform_device *pdev)
 	data->dev = &pdev->dev;
 	init_waitqueue_head(&data->wait_queue);
 
-	if (dev_get_platdata(&pdev->dev) == NULL) {
-		dev_err(&pdev->dev, "no platform data supplied\n");
-		return -EINVAL;
-	}
 	data->pdata = dev_get_platdata(&pdev->dev);
+	if (!data->pdata) {
+		if (pdev->dev.of_node) {
+			data->pdata = devm_kzalloc(&pdev->dev,
+						sizeof(struct sht15_platform_data),
+						GFP_KERNEL);
+			if (!data->pdata)
+				return -ENOMEM;
+		} else {
+			return -ENODEV;
+		}
+	}
+
+	ret = sht15_get_pdata(&pdev->dev, data->pdata);
+	if (ret)
+		return ret;
+
 	data->supply_uv = data->pdata->supply_mv * 1000;
 	if (data->pdata->checksum)
 		data->checksumming = true;
@@ -974,31 +997,6 @@ static int sht15_probe(struct platform_device *pdev)
 		}
 	}
 
-	/* Try requesting the GPIOs */
-	ret = devm_gpio_request_one(&pdev->dev, data->pdata->gpio_sck,
-			GPIOF_OUT_INIT_LOW, "SHT15 sck");
-	if (ret) {
-		dev_err(&pdev->dev, "clock line GPIO request failed\n");
-		goto err_release_reg;
-	}
-
-	ret = devm_gpio_request(&pdev->dev, data->pdata->gpio_data,
-				"SHT15 data");
-	if (ret) {
-		dev_err(&pdev->dev, "data line GPIO request failed\n");
-		goto err_release_reg;
-	}
-
-	ret = devm_request_irq(&pdev->dev, gpio_to_irq(data->pdata->gpio_data),
-			       sht15_interrupt_fired,
-			       IRQF_TRIGGER_FALLING,
-			       "sht15 data",
-			       data);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to get irq for data line\n");
-		goto err_release_reg;
-	}
-	disable_irq_nosync(gpio_to_irq(data->pdata->gpio_data));
 	ret = sht15_connection_reset(data);
 	if (ret)
 		goto err_release_reg;
@@ -1075,6 +1073,7 @@ MODULE_DEVICE_TABLE(platform, sht15_device_ids);
 static struct platform_driver sht15_driver = {
 	.driver = {
 		.name = "sht15",
+		.of_match_table = of_match_ptr(of_sht15_match),
 	},
 	.probe = sht15_probe,
 	.remove = sht15_remove,
