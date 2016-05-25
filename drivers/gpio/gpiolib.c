@@ -308,6 +308,11 @@ int gpiochip_add(struct gpio_chip *chip)
 	if (!descs)
 		return -ENOMEM;
 
+	if (chip->ngpio == 0) {
+		chip_err(chip, "tried to insert a GPIO chip with zero lines\n");
+		return -EINVAL;
+	}
+
 	spin_lock_irqsave(&gpio_lock, flags);
 
 	if (base < 0) {
@@ -1297,13 +1302,7 @@ static int _gpiod_get_raw_value(const struct gpio_desc *desc)
 	chip = desc->chip;
 	offset = gpio_chip_hwgpio(desc);
 	value = chip->get ? chip->get(chip, offset) : -EIO;
-	/*
-	 * FIXME: fix all drivers to clamp to [0,1] or return negative,
-	 * then change this to:
-	 * value = value < 0 ? value : !!value;
-	 * so we can properly propagate error codes.
-	 */
-	value = !!value;
+	value = value < 0 ? value : !!value;
 	trace_gpio_value(desc_to_gpio(desc), 1, value);
 	return value;
 }
@@ -1897,7 +1896,7 @@ static struct gpio_desc *acpi_find_gpio(struct device *dev, const char *con_id,
 			return desc;
 	}
 
-	if (info.active_low)
+	if (info.polarity == GPIO_ACTIVE_LOW)
 		*flags |= GPIO_ACTIVE_LOW;
 
 	return desc;
@@ -2235,7 +2234,7 @@ struct gpio_desc *fwnode_get_named_gpiod(struct fwnode_handle *fwnode,
 
 		desc = acpi_node_get_gpiod(fwnode, propname, 0, &info);
 		if (!IS_ERR(desc))
-			active_low = info.active_low;
+			active_low = info.polarity == GPIO_ACTIVE_LOW;
 	}
 
 	if (IS_ERR(desc))
