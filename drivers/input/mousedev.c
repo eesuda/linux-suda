@@ -746,7 +746,7 @@ static ssize_t mousedev_read(struct file *file, char __user *buffer,
 #ifdef CONFIG_CPU_BIG_ENDIAN
 	/* Force mouse data LE in userspace as consumers
 	   of the data expect it in this format */
-	cpu_to_le16p(data);
+	cpu_to_le16p((__u16 *)data);
 #endif
 	spin_unlock_irq(&client->packet_lock);
 
