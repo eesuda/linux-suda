@@ -241,6 +241,65 @@ struct printk_log {
  */
 static DEFINE_RAW_SPINLOCK(logbuf_lock);
 
+#ifdef CONFIG_EARLY_PRINTK
+struct console *early_console;
+
+static void early_vprintk(const char *fmt, va_list ap)
+{
+	if (early_console) {
+		char buf[512];
+		int n = vscnprintf(buf, sizeof(buf), fmt, ap);
+
+		early_console->write(early_console, buf, n);
+	}
+}
+
+asmlinkage void early_printk(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	early_vprintk(fmt, ap);
+	va_end(ap);
+}
+
+/*
+ * This is independent of any log levels - a global
+ * kill switch that turns off all of printk.
+ *
+ * Used by the NMI watchdog if early-printk is enabled.
+ */
+static bool __read_mostly printk_killswitch;
+
+static int __init force_early_printk_setup(char *str)
+{
+	printk_killswitch = true;
+	return 0;
+}
+early_param("force_early_printk", force_early_printk_setup);
+
+void printk_kill(void)
+{
+	printk_killswitch = true;
+}
+
+#ifdef CONFIG_PRINTK
+static int forced_early_printk(const char *fmt, va_list ap)
+{
+	if (!printk_killswitch)
+		return 0;
+	early_vprintk(fmt, ap);
+	return 1;
+}
+#endif
+
+#else
+static inline int forced_early_printk(const char *fmt, va_list ap)
+{
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_PRINTK
 DECLARE_WAIT_QUEUE_HEAD(log_wait);
 /* the next printk record to read by syslog(READ) or /proc/kmsg */
@@ -1468,6 +1527,11 @@ static void call_console_drivers(int level,
 	if (!console_drivers)
 		return;
 
+	if (IS_ENABLED(CONFIG_PREEMPT_RT_BASE)) {
+		if (in_irq() || in_nmi())
+			return;
+	}
+
 	migrate_disable();
 	for_each_console(con) {
 		if (exclusive_console && con != exclusive_console)
@@ -1691,62 +1755,6 @@ static size_t cont_print_text(char *text, size_t size)
 	}
 	return textlen;
 }
-
-#ifdef CONFIG_EARLY_PRINTK
-struct console *early_console;
-
-static void early_vprintk(const char *fmt, va_list ap)
-{
-	if (early_console) {
-		char buf[512];
-		int n = vscnprintf(buf, sizeof(buf), fmt, ap);
-
-		early_console->write(early_console, buf, n);
-	}
-}
-
-asmlinkage void early_printk(const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	early_vprintk(fmt, ap);
-	va_end(ap);
-}
-
-/*
- * This is independent of any log levels - a global
- * kill switch that turns off all of printk.
- *
- * Used by the NMI watchdog if early-printk is enabled.
- */
-static bool __read_mostly printk_killswitch;
-
-static int __init force_early_printk_setup(char *str)
-{
-	printk_killswitch = true;
-	return 0;
-}
-early_param("force_early_printk", force_early_printk_setup);
-
-void printk_kill(void)
-{
-	printk_killswitch = true;
-}
-
-static int forced_early_printk(const char *fmt, va_list ap)
-{
-	if (!printk_killswitch)
-		return 0;
-	early_vprintk(fmt, ap);
-	return 1;
-}
-#else
-static inline int forced_early_printk(const char *fmt, va_list ap)
-{
-	return 0;
-}
-#endif
 
 asmlinkage int vprintk_emit(int facility, int level,
 			    const char *dict, size_t dictlen,
@@ -2410,7 +2418,6 @@ skip:
 		start_critical_timings();
 		local_irq_restore(flags);
 #endif
-
 		if (do_cond_resched)
 			cond_resched();
 	}
@@ -2461,6 +2468,11 @@ EXPORT_SYMBOL(console_conditional_schedule);
 void console_unblank(void)
 {
 	struct console *c;
+
+	if (IS_ENABLED(CONFIG_PREEMPT_RT_BASE)) {
+		if (in_irq() || in_nmi())
+			return;
+	}
 
 	/*
 	 * console_unblank can no longer be called in interrupt context unless
