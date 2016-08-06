@@ -91,7 +91,7 @@ enum hrtimer_restart {
  * @irqsafe:	timer can run in hardirq context
  * @praecox:	timer expiry time if expired at the time of programming
  * @is_rel:	Set if the timer was armed relative
- * @start_pid: timer statistics field to store the pid of the task which
+ * @start_pid:  timer statistics field to store the pid of the task which
  *		started the timer
  * @start_site:	timer statistics field to store the site where the timer
  *		was started
@@ -105,13 +105,13 @@ struct hrtimer {
 	ktime_t				_softexpires;
 	enum hrtimer_restart		(*function)(struct hrtimer *);
 	struct hrtimer_clock_base	*base;
-	unsigned long			state;
-	u8				is_rel;
+	u8				state;
 	struct list_head		cb_entry;
 	int				irqsafe;
 #ifdef CONFIG_MISSED_TIMER_OFFSETS_HIST
 	ktime_t				praecox;
 #endif
+	u8				is_rel;
 #ifdef CONFIG_TIMER_STATS
 	int				start_pid;
 	void				*start_site;
