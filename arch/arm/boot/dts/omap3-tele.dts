@@ -15,6 +15,13 @@
 
 	cpus {
 		cpu@0 {
+			operating-points = <
+				/* kHz    uV */
+				300000  1012500
+				600000  1200000
+				800000  1325000
+				1000000 1375000
+			>;
 			cpu0-supply = <&vcc>;
 		};
 	};
@@ -79,7 +86,7 @@
 		regulator-name = "hsusb2_vbus";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		gpio = <&twl_gpio 18 0>;	/* GPIO LEDA */
+		gpio = <&twl_gpio 18 GPIO_ACTIVE_HIGH>;	/* GPIO LEDA */
 		startup-delay-us = <70000>;
 	};
 
@@ -147,8 +154,8 @@
 
         sht10 {
                 compatible = "sensirion,sht15";
-                sck-gpios = <&gpio5 10 GPIO_ACTIVE_HIGH>; /* gpio_138 */
-                data-gpios = <&gpio5 11 GPIO_ACTIVE_HIGH>; /* gpio_139 */
+                sck-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>; /* gpio_15 */
+                data-gpios = <&gpio1 14 GPIO_ACTIVE_HIGH>; /* gpio_14 */
                 supply-mv = <3300>; /* 3.3 V */
                 pinctrl-names = "default";
                 pinctrl-0 = <
@@ -246,16 +253,9 @@
 		>;
 	};
 
-	sht10_pins: pinmux_sht10_pins {
-		pinctrl-single,pins = <
-			OMAP3_CORE1_IOPAD(0x2168, PIN_OUTPUT | MUX_MODE4)   /* sdmmc2_dat6.sdmmc2_dir_cmd.cam_shutter.sdmmc3_dat2.gpio_138 */
-			OMAP3_CORE1_IOPAD(0x216a, PIN_INPUT | MUX_MODE4)   /* sdmmc2_dat7.sdmmc2_clkin.sdmmc3_dat3.gpio_139 */
-		>;
-	};
-
 	mmc2_pins_wifi: pinmux_mmc2_pins_wifi {
 		pinctrl-single,pins = <
-			OMAP3_CORE1_IOPAD(0x2158, PIN_OUTPUT | MUX_MODE0)   /* sdmmc2_clk.mcspi3_clk.gpio_130 */
+			OMAP3_CORE1_IOPAD(0x2158, PIN_INPUT | MUX_MODE0)   /* sdmmc2_clk.mcspi3_clk.gpio_130 */
 			OMAP3_CORE1_IOPAD(0x215a, PIN_INPUT | MUX_MODE0)   /* sdmmc2_cmd.mcspi3_simo.gpio_131 */
 			OMAP3_CORE1_IOPAD(0x215c, PIN_INPUT | MUX_MODE0)   /* sdmmc2_dat0.mcspi3_somi.gpio_132 */
 			OMAP3_CORE1_IOPAD(0x215e, PIN_INPUT | MUX_MODE0)   /* sdmmc2_dat1.gpio_133 */
@@ -282,6 +282,12 @@
 		>;
 	};
 
+	sht10_pins: pinmux_sht10_pins {
+		pinctrl-single,pins = <
+			OMAP3630_CORE2_IOPAD(0x25de, PIN_OUTPUT | MUX_MODE4)   /* etk_d1.mcspi3_somi.hsusb1_data1.gpio_15 */
+			OMAP3630_CORE2_IOPAD(0x25dc, PIN_INPUT | MUX_MODE4)   /* edk_d0.mcspi3_simo.sdmmc3_dat4.hsusb1_data0.gpio_14 */
+		>;
+	};
 };
 
 &i2c1 {
@@ -309,7 +315,7 @@
 #include "twl4030_omap3.dtsi"
 
 &i2c2 {
-	clock-frequency = <300000>;
+	clock-frequency = <400000>;
 	mt9p031: camera@0x5d {
 		compatible = "aptina,mt9p031";
 		reg = <0x5d>;
@@ -338,12 +344,6 @@
         pinctrl-names = "default";
 	pinctrl-0 = <&mmc2_pins_wifi>;
 	bus-width = <4>;
-        ti,non-removable;
-	vmmc-supply = <&vmmc2>; /* DIRTY FIX */
-	
-	brcmf: brcmf {
-		compatible = "brcm,bcm4329-fmac";
-	};
 };
 
 &mmc3 {
@@ -475,8 +475,12 @@
 			reg = <0xd80000 0x80000>;
 		};
 		partition@0xe00000 {
+			label = "wrtrootfs";
+			reg = <0xe00000 0x4000000>;
+		};
+		partition@0x4e00000 {
 			label = "Filesystem";
-			reg = <0xe00000 0x1f200000>;
+			reg = <0x4e00000 0x1b200000>;
 		};
 	};
 };
